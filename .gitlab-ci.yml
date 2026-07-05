@@ -1,0 +1,172 @@
+# SharedCommon Platform — GitLab CI/CD Pipeline
+#
+# Stages:
+#   test   → build, run unit tests, collect coverage
+#   pack   → pack NuGet packages
+#   publish → push packages to NuGet feed (tag builds only)
+#
+# Required CI/CD variables (set in GitLab project settings → CI/CD → Variables):
+#   NUGET_API_KEY   — API key for NuGet feed (protected, masked)
+#   NUGET_FEED_URL  — Feed URL (e.g., https://api.nuget.org/v3/index.json)
+
+stages:
+  - test
+  - security
+  - pack
+  - publish
+
+# ── Shared defaults ────────────────────────────────────────────────────────────
+default:
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  interruptible: true
+
+variables:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget/packages"
+
+# Cache NuGet packages across jobs on the same branch
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .nuget/packages/
+  policy: pull-push
+
+# ── Test ───────────────────────────────────────────────────────────────────────
+test:unit:
+  stage: test
+  script:
+    - dotnet restore --locked-mode
+    - dotnet build --no-restore --configuration Release
+    - >
+      dotnet test
+      --no-build
+      --configuration Release
+      --collect:"XPlat Code Coverage"
+      --results-directory ./coverage
+      --logger "junit;LogFilePath=./coverage/test-results.xml"
+      --verbosity minimal
+  coverage: '/Total\s*\|\s*([\d.]+)/'
+  artifacts:
+    when: always
+    reports:
+      junit: coverage/test-results.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/**/coverage.cobertura.xml
+    paths:
+      - coverage/
+    expire_in: 7 days
+  rules:
+    - when: always
+
+test:format:
+  stage: test
+  script:
+    - dotnet format --verify-no-changes --verbosity diagnostic
+  rules:
+    - when: always
+
+# ── Security ──────────────────────────────────────────────────────────────────
+security:sast:
+  stage: security
+  script:
+    - echo "Running static security analysis..."
+    - dotnet build -c Release /p:EnableNETAnalyzers=true /p:AnalysisTreatWarningsAsErrors=true
+    - echo "Checking for hardcoded secrets..."
+    - |
+      if grep -r -i "password\|secret\|api.key\|token" src/ --include="*.cs" \
+         | grep -v "// " | grep -v "/*" | grep -v "Configuration" | grep -v "Options"; then
+        echo "WARNING: Possible hardcoded secrets found"
+        exit 1
+      fi
+  allow_failure: false
+  artifacts:
+    expire_in: 30 days
+  rules:
+    - when: always
+
+security:dependencies:
+  stage: security
+  before_script:
+    - dotnet restore --locked-mode
+  script:
+    - echo "Scanning NuGet dependencies for vulnerabilities..."
+    - dotnet tool install -g dotnet-outdated-tool
+    - dotnet outdated --include-prerelease || true
+    - |
+      dotnet list package --vulnerable 2>&1 | tee dependency-report.txt
+      if grep -i "vulnerable" dependency-report.txt; then
+        echo "CRITICAL: Vulnerable dependencies detected"
+        exit 1
+      fi
+  allow_failure: false
+  artifacts:
+    paths:
+      - dependency-report.txt
+    expire_in: 30 days
+  rules:
+    - when: always
+
+security:secrets:
+  stage: security
+  image: python:3.11
+  script:
+    - pip install detect-secrets truffleHog3
+    - echo "Scanning for hardcoded secrets..."
+    - |
+      detect-secrets scan --all-files 2>&1 | tee secret-scan.txt
+      if grep -i "secret\|key\|token" secret-scan.txt; then
+        echo "WARNING: Possible secrets detected"
+        exit 1
+      fi
+  allow_failure: false
+  artifacts:
+    paths:
+      - secret-scan.txt
+    expire_in: 30 days
+  rules:
+    - when: always
+
+# ── Pack ───────────────────────────────────────────────────────────────────────
+pack:
+  stage: pack
+  needs:
+    - test:unit
+    - test:format
+    - security:sast
+    - security:dependencies
+    - security:secrets
+  script:
+    - >
+      dotnet pack
+      --configuration Release
+      --no-build
+      --output ./artifacts
+      -p:PackageVersion=$CI_COMMIT_TAG
+  artifacts:
+    paths:
+      - artifacts/*.nupkg
+      - artifacts/*.snupkg
+    expire_in: 30 days
+  rules:
+    # Only pack on version tags (e.g., v1.0.0, v2.3.1)
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+
+# ── Publish ────────────────────────────────────────────────────────────────────
+publish:nuget:
+  stage: publish
+  needs:
+    - pack
+  environment:
+    name: nuget
+  script:
+    - >
+      dotnet nuget push ./artifacts/*.nupkg
+      --source "$NUGET_FEED_URL"
+      --api-key "$NUGET_API_KEY"
+      --skip-duplicate
+  rules:
+    # Only publish on version tags; NUGET_API_KEY must be set
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/ && $NUGET_API_KEY'

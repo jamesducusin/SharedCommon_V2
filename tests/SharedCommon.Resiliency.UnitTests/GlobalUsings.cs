@@ -1,0 +1,11 @@
+global using Xunit;
+global using SharedCommon.Resiliency;
+global using NSubstitute;
+global using Microsoft.Extensions.DependencyInjection;
+global using Microsoft.Extensions.Configuration;
+global using Microsoft.Extensions.Logging;
+global using Microsoft.Extensions.Options;
+global using Polly;
+global using Polly.CircuitBreaker;
+global using Polly.Timeout;
+global using Polly.Registry;

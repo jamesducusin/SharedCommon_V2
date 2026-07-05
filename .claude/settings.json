@@ -1,0 +1,41 @@
+{
+  "ai_engineering_rules": {
+    "priority_order": [
+      "correctness",
+      "maintainability",
+      "observability",
+      "security",
+      "extensibility",
+      "performance"
+    ],
+    "never_prioritize": [
+      "shortest_code",
+      "fastest_implementation",
+      "quick_hacks",
+      "temporary_fixes"
+    ]
+  },
+  "context_optimization": {
+    "max_root_claude_lines": 60,
+    "max_skill_length": 200,
+    "prefer_linking": true,
+    "avoid_duplication": true
+  },
+  "quality_gates": {
+    "enforce_architecture_tests": true,
+    "require_unit_tests": true,
+    "require_xml_docs": true,
+    "treat_warnings_as_errors": true,
+    "require_logging": true
+  },
+  "forbidden_patterns": [
+    "hardcoded_secrets",
+    "static_mutable_state",
+    "service_locator",
+    "silent_exceptions",
+    "copy_paste",
+    "magic_strings",
+    "console_writeline",
+    "god_classes"
+  ]
+}

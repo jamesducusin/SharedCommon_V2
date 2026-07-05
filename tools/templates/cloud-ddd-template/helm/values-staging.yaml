@@ -1,0 +1,40 @@
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+config:
+  ASPNETCORE_ENVIRONMENT: Staging
+  LOG_LEVEL: Information
+  OTEL_TRACES_SAMPLER_ARG: "0.5"
+  RESILIENCE_CIRCUIT_THRESHOLD: "5"
+
+secrets:
+  otelExporterEndpoint: "http://otel-collector.observability:4317"
+
+ingress:
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+  hosts:
+    - host: api-staging.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+database:
+  connection_timeout: 60
+  query_timeout: 60
+
+observability:
+  tracing:
+    samplingRate: 0.5

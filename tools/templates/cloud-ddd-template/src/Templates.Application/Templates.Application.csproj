@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- NuGet Package Information -->
+  <PropertyGroup>
+    <PackageId>$(ProjectName).Application</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Your Team</Authors>
+    <Description>Application use cases, commands, queries, and handlers</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MediatR" />
+    <PackageReference Include="FluentValidation" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Templates.Domain\Templates.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,324 @@
+// Example Program.cs demonstrating full enterprise configuration setup
+// This is a REFERENCE IMPLEMENTATION - copy patterns to your actual Program.cs
+
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using OpenTelemetry;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using StackExchange.Redis;
+using SharedCommon.Configuration;
+using SharedCommon.Logging;
+using SharedCommon.Observability;
+using System.Text;
+
+var builder = WebApplicationBuilder.CreateBuilder(args);
+
+// ============================================================================
+// 1. CONFIGURATION VALIDATION (Fail-fast startup)
+// ============================================================================
+builder.Services.AddEnterpriseConfigurationValidation(builder.Configuration);
+
+// ============================================================================
+// 2. STRUCTURED LOGGING WITH SERILOG
+// ============================================================================
+builder.Services.AddStructuredLogging(
+    builder.Configuration,
+    "MyService");
+
+var logger = builder.Services.BuildServiceProvider()
+    .GetRequiredService<ILogger<Program>>();
+
+logger.LogInformation("Starting enterprise application initialization...");
+
+// ============================================================================
+// 3. REDIS CONNECTION (Required for caching, rate limiting, feature flags)
+// ============================================================================
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis") 
+    ?? throw new InvalidOperationException("Redis connection string not configured");
+
+var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
+redisOptions.ConnectTimeout = 5000;
+redisOptions.SyncTimeout = 5000;
+redisOptions.AbortOnConnectFail = false;  // Fail-open pattern
+
+var connectionMultiplexer = await ConnectionMultiplexer.ConnectAsync(redisOptions);
+builder.Services.AddSingleton<IConnectionMultiplexer>(connectionMultiplexer);
+
+logger.LogInformation("Redis connection established");
+
+// ============================================================================
+// 4. DISTRIBUTED RATE LIMITING
+// ============================================================================
+builder.Services.AddDistributedRateLimiting(
+    builder.Configuration,
+    options =>
+    {
+        options.Limit = int.Parse(builder.Configuration["RateLimit:Limit"] ?? "100");
+        options.WindowSeconds = int.Parse(builder.Configuration["RateLimit:WindowSeconds"] ?? "60");
+        options.Enabled = bool.Parse(builder.Configuration["RateLimit:Enabled"] ?? "true");
+        options.StrictMode = builder.Environment.IsProduction();  // Strict mode in production
+    });
+
+logger.LogInformation("Distributed rate limiting registered");
+
+// ============================================================================
+// 5. DISTRIBUTED FEATURE FLAGS (Redis-backed for canary deployments)
+// ============================================================================
+builder.Services.AddDistributedFeatureFlags();
+
+logger.LogInformation("Distributed feature flags registered");
+
+// ============================================================================
+// 6. POISON MESSAGE HANDLER (For message queue resilience)
+// ============================================================================
+builder.Services.AddPoisonMessageHandling(
+    options =>
+    {
+        options.MaxRetries = 3;
+        options.InitialDelayMs = 100;
+        options.DLQRetention = TimeSpan.FromDays(30);
+        options.EnableAutomaticRetry = true;
+    });
+
+logger.LogInformation("Poison message handler registered");
+
+// ============================================================================
+// 7. ZERO-DOWNTIME MIGRATIONS (SQL Server ONLINE DDL)
+// ============================================================================
+var dbConnectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Database connection string not configured");
+
+builder.Services.AddZeroDowntimeMigrations(dbConnectionString);
+
+logger.LogInformation("Zero-downtime migration service registered");
+
+// ============================================================================
+// 8. AUTHENTICATION WITH JWT
+// ============================================================================
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? throw new InvalidOperationException("JWT key not configured");
+var jwtIssuer = builder.Configuration["Jwt:Issuer"]
+    ?? throw new InvalidOperationException("JWT issuer not configured");
+var jwtAudience = builder.Configuration["Jwt:Audience"]
+    ?? throw new InvalidOperationException("JWT audience not configured");
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ValidateIssuer = true,
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = true,
+            ValidAudience = jwtAudience,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero  // No clock skew in production
+        };
+    });
+
+logger.LogInformation("JWT authentication configured");
+
+// ============================================================================
+// 9. CORS WITH PRODUCTION SECURITY
+// ============================================================================
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? new[] { "https://localhost:3000" };
+
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy
+            .WithOrigins(allowedOrigins)
+            .AllowAnyMethod()
+            .AllowAnyHeader()
+            .AllowCredentials()
+            .WithExposedHeaders("X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After");
+    });
+});
+
+logger.LogInformation("CORS configured for {OriginCount} origins", allowedOrigins.Length);
+
+// ============================================================================
+// 10. OPENTELEMETRY FOR OBSERVABILITY
+// ============================================================================
+var serviceName = builder.Configuration["Observability:ServiceName"] ?? "MyService";
+var environment = builder.Configuration["Observability:Environment"] ?? "dev";
+var jaegerHost = builder.Configuration["Observability:JaegerHost"] ?? "localhost";
+var jaegerPort = int.Parse(builder.Configuration["Observability:JaegerPort"] ?? "6831");
+var samplingRate = double.Parse(builder.Configuration["Observability:SamplingRate"] ?? "0.1");
+
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracerProviderBuilder =>
+    {
+        tracerProviderBuilder
+            .SetResourceBuilder(ResourceBuilder.CreateDefault()
+                .AddService(serviceName, serviceVersion: "1.0")
+                .AddAttributes(new Dictionary<string, object>
+                {
+                    { "environment", environment }
+                }))
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddSqlClientInstrumentation()
+            .AddRedisInstrumentation()
+            .AddJaegerExporter(options =>
+            {
+                options.AgentHost = jaegerHost;
+                options.AgentPort = jaegerPort;
+            })
+            .SetSampler(new TraceIdRatioBasedSampler(samplingRate));
+    });
+
+logger.LogInformation("OpenTelemetry configured (service={ServiceName}, env={Environment}, sampling={SamplingRate}%)",
+    serviceName, environment, samplingRate * 100);
+
+// ============================================================================
+// 11. ADD CONTROLLERS AND API ENDPOINTS
+// ============================================================================
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// ============================================================================
+// 12. BUILD APPLICATION
+// ============================================================================
+var app = builder.Build();
+
+// ============================================================================
+// 13. VALIDATE CONFIGURATION BEFORE STARTING
+// ============================================================================
+try
+{
+    app.Services.ValidateStartupConfiguration();
+    logger.LogInformation("Configuration validation passed");
+}
+catch (InvalidOperationException ex)
+{
+    logger.LogCritical(ex, "Configuration validation failed - application cannot start");
+    throw;
+}
+
+// ============================================================================
+// 14. MIDDLEWARE PIPELINE
+// ============================================================================
+
+// Use HTTPS redirection in production
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
+// OpenTelemetry tracing
+app.UseOpenTelemetryPrometheusScrapingEndpoint();
+
+// Swagger in development
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+// Security and CORS
+app.UseCors();
+app.UseAuthentication();
+app.UseAuthorization();
+
+// Apply distributed rate limiting BEFORE routing (early rejection)
+app.UseDistributedRateLimiting();
+
+// Map controllers
+app.MapControllers();
+
+// ============================================================================
+// 15. HEALTH CHECK ENDPOINT
+// ============================================================================
+app.MapGet("/health", () => new
+{
+    Status = "Healthy",
+    Service = serviceName,
+    Environment = environment,
+    Timestamp = DateTime.UtcNow
+})
+.WithName("Health")
+.WithOpenApi()
+.AllowAnonymous();
+
+// ============================================================================
+// 16. READINESS PROBE ENDPOINT (Validates dependencies)
+// ============================================================================
+app.MapGet("/ready", async (IConnectionMultiplexer redis) =>
+{
+    try
+    {
+        // Check Redis
+        var redisOk = redis.IsConnected;
+        
+        return Results.Ok(new
+        {
+            Ready = redisOk,
+            Redis = redisOk ? "Connected" : "Disconnected",
+            Timestamp = DateTime.UtcNow
+        });
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Readiness check failed");
+        return Results.ServiceUnavailable(new { Error = "Service not ready" });
+    }
+})
+.WithName("Readiness")
+.WithOpenApi()
+.AllowAnonymous();
+
+// ============================================================================
+// 17. EXAMPLE: RATE-LIMITED ENDPOINT
+// ============================================================================
+app.MapGet("/api/data", async (IDistributedRateLimiter rateLimiter, HttpContext ctx) =>
+{
+    var clientId = ctx.User?.FindFirst("sub")?.Value 
+        ?? ctx.Connection.RemoteIpAddress?.ToString() 
+        ?? "anonymous";
+
+    var result = await rateLimiter.TryAcquireAsync(clientId);
+    
+    if (!result.Allowed)
+    {
+        return Results.StatusCode(429, new { Error = "Rate limit exceeded" });
+    }
+
+    return Results.Ok(new { Message = "Data retrieved", RemainingTokens = result.TokensRemaining });
+})
+.WithName("GetData")
+.WithOpenApi()
+.RequireAuthorization();
+
+// ============================================================================
+// 18. EXAMPLE: FEATURE FLAG-GATED ENDPOINT
+// ============================================================================
+app.MapGet("/api/experimental", async (IDistributedFeatureFlagService flags, HttpContext ctx) =>
+{
+    var userId = ctx.User?.FindFirst("sub")?.Value;
+    
+    var isEnabled = await flags.IsEnabledAsync("experimental_feature", userId);
+    
+    if (!isEnabled)
+    {
+        return Results.NotFound();
+    }
+
+    return Results.Ok(new { Message = "Experimental feature enabled" });
+})
+.WithName("ExperimentalFeature")
+.WithOpenApi();
+
+// ============================================================================
+// 19. APPLICATION START
+// ============================================================================
+logger.LogInformation("Application starting...");
+await app.RunAsync();

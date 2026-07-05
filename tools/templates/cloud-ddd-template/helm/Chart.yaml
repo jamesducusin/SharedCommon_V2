@@ -1,0 +1,19 @@
+apiVersion: v2
+name: templates-api
+description: Cloud-DDD Template API - Enterprise-grade ASP.NET Core microservice
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - dotnet
+  - aspnet-core
+  - microservice
+  - ddd
+  - cloud-native
+maintainers:
+  - name: Your Team
+    email: team@example.com
+home: https://github.com/your-org/cloud-ddd-template
+sources:
+  - https://github.com/your-org/cloud-ddd-template
+dependencies: []

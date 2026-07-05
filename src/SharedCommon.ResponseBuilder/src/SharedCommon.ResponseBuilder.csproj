@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Standardized HTTP response envelope: ApiResponse, ProblemDetails (RFC 9457), and Result-to-response mapping.</Description>
+    <PackageTags>sharedcommon;responses;api;problemdetails;envelope</PackageTags>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\SharedCommon.Core\src\SharedCommon.Core.csproj" />
+  </ItemGroup>
+</Project>

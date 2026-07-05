@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Polly v8 resilience pipelines: retry with jitter, circuit breaker with logging, timeout, and HTTP client integration.</Description>
+    <PackageTags>sharedcommon;resilience;polly;retry;circuitbreaker;timeout</PackageTags>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Polly" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
+    <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
+    <PackageReference Include="StackExchange.Redis" />
+  </ItemGroup>
+</Project>

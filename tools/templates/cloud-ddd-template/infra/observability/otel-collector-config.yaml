@@ -1,0 +1,170 @@
+receivers:
+  # OTLP receiver for applications sending traces and metrics
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # Prometheus receiver for scraping metrics
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: otel-collector
+          static_configs:
+            - targets: ['localhost:8888']
+        - job_name: templates-api
+          kubernetes_sd_configs:
+            - role: pod
+              namespaces:
+                names:
+                  - templates
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+              action: keep
+              regex: "true"
+            - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port]
+              action: replace
+              target_label: __address__
+              regex: ([^:]+)(?::\d+)?;(\d+)
+              replacement: ${1}:${2}
+
+  # Host metrics receiver
+  hostmetrics:
+    collection_interval: 60s
+    scrapers:
+      cpu: {}
+      disk: {}
+      filesystem: {}
+      load: {}
+      memory: {}
+      network: {}
+      processes: {}
+      paging: {}
+
+processors:
+  # Batch processor for better throughput
+  batch:
+    send_batch_size: 1024
+    timeout: 10s
+
+  # Memory limit processor to prevent OOM
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Attributes processor for adding metadata
+  attributes:
+    actions:
+      - key: environment
+        value: production
+        action: insert
+      - key: service.version
+        from_attribute: service.version
+        action: insert
+
+  # Span processor for sampling and filtering
+  sampling:
+    policies:
+      - name: keep-all-error-traces
+        type: status_code
+        status_code:
+          status_codes: [ERROR, UNSET]
+      - name: sample-10-percent
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  # Attributes processor for removing sensitive data
+  attributes/privacy:
+    actions:
+      - pattern: ".*password.*"
+        action: delete
+      - pattern: ".*token.*"
+        action: delete
+      - pattern: ".*secret.*"
+        action: delete
+
+  # Resource detection processor
+  resource_detection:
+    detectors: [gcp, aws, azure, docker, env]
+    timeout: 2s
+    override: false
+
+  # Metrics transform processor
+  metricstransform:
+    transforms:
+      - include: .*
+        action: update
+        new_name: "{{metric.name}}"
+
+exporters:
+  # Jaeger exporter for distributed tracing
+  jaeger:
+    endpoint: jaeger:14250
+
+  # Prometheus exporter for metrics
+  prometheus:
+    endpoint: "0.0.0.0:8888"
+    namespace: templates
+    const_labels:
+      service: templates-api
+
+  # Logging exporter for debugging (disabled in production)
+  logging:
+    loglevel: debug
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+  # OTLP exporter for re-exporting
+  otlp:
+    client:
+      endpoint: localhost:4317
+      tls:
+        insecure: true
+
+extensions:
+  # Performance profiler
+  pprof:
+    endpoint: 0.0.0.0:6060
+
+  # Health check endpoint
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+  # Z Pages for debugging
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  extensions: [pprof, health_check, zpages]
+  
+  pipelines:
+    # Traces pipeline
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/privacy, sampling, attributes, resource_detection, batch]
+      exporters: [jaeger, logging]
+    
+    # Metrics pipeline
+    metrics:
+      receivers: [otlp, prometheus, hostmetrics]
+      processors: [memory_limiter, attributes, batch]
+      exporters: [prometheus, logging]
+    
+    # Logs pipeline (if enabled)
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes, batch]
+      exporters: [logging]
+
+  telemetry:
+    logs:
+      level: info
+      output_paths:
+        - stdout
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888

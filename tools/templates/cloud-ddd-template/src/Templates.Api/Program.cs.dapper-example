@@ -1,0 +1,198 @@
+// ============================================================================
+// Program.cs - Dapper Registration Example
+// ============================================================================
+// This file demonstrates how to register Dapper services in ASP.NET Core
+// for high-performance data access with stored procedures.
+// ============================================================================
+
+using Serilog;
+using Templates.Application;
+using Templates.Infrastructure;
+using Templates.Infrastructure.Extensions;
+
+var builder = WebApplicationBuilder.CreateBuilder(args);
+
+// ============================================================================
+// Logging Configuration
+// ============================================================================
+builder.Host.UseSerilog((context, services, configuration) => configuration
+    .ReadFrom.Configuration(context.Configuration)
+    .ReadFrom.Services(services));
+
+// ============================================================================
+// Service Registration
+// ============================================================================
+
+// Add Cerberus shared services (logging, middleware, validation, etc.)
+builder.Services
+    .AddCerberusLogging(builder.Configuration)
+    .AddCerberusResponseBuilder()
+    .AddCerberusHealthChecks()
+    .AddCerberusValidation();
+
+// Add Application layer services (MediatR, validators)
+builder.Services.AddApplicationServices();
+
+// ============================================================================
+// Dapper Persistence Layer Registration
+// ============================================================================
+// This replaces the EF Core DbContext registration with Dapper repositories.
+// The generic IDapperRepository<TEntity, TId> eliminates the need for
+// per-entity repository classes.
+
+// Option 1: Simple registration (uses DefaultConnection from appsettings.json)
+builder.Services.AddDapperPersistence(builder.Configuration);
+
+// Option 2: Custom connection string
+// builder.Services.AddDapperPersistence(
+//     "Server=localhost;Database=TemplateDb;Trusted_Connection=true;");
+
+// Option 3: Advanced configuration with options
+// builder.Services.AddDapperPersistenceWithConfiguration(config =>
+// {
+//     config.ConnectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+//     config.CommandTimeout = 60;
+//     config.MaxPoolSize = 100;
+//     config.LogSqlCommands = builder.Environment.IsDevelopment();
+// });
+
+// ============================================================================
+// Infrastructure Services
+// ============================================================================
+// Register any other infrastructure services (repositories, services, etc.)
+builder.Services.AddInfrastructureServices();
+
+// ============================================================================
+// API Versioning and Endpoints
+// ============================================================================
+builder.Services
+    .AddApiVersioning(options =>
+    {
+        options.DefaultApiVersion = new(1, 0);
+        options.AssumeDefaultVersionWhenUnspecified = true;
+    });
+
+builder.Services
+    .AddCors(options =>
+    {
+        options.AddDefaultPolicy(policy =>
+        {
+            policy.AllowAnyOrigin()
+                .AllowAnyMethod()
+                .AllowAnyHeader();
+        });
+    });
+
+builder.Services.AddControllers();
+
+// ============================================================================
+// Build Application
+// ============================================================================
+var app = builder.Build();
+
+// Configure middleware pipeline
+if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
+}
+
+app.UseHttpsRedirection();
+app.UseCors();
+
+// Cerberus middleware
+app.UseCerberusMiddleware();
+
+// Health checks endpoint
+app.MapHealthChecks("/health");
+
+// API endpoints
+app.MapControllers();
+
+// ============================================================================
+// Database Initialization (Optional)
+// ============================================================================
+// If using SQL Server, ensure stored procedures are created.
+// In production, run StoredProcedures_Orders.sql separately.
+
+// Example (in development only):
+if (app.Environment.IsDevelopment())
+{
+    // Initialize stored procedures from script
+    // await InitializeStoredProceduresAsync(app.Services);
+}
+
+await app.RunAsync();
+
+// ============================================================================
+// Helper Methods
+// ============================================================================
+
+// Optional: Initialize stored procedures on startup
+// async Task InitializeStoredProceduresAsync(IServiceProvider services)
+// {
+//     try
+//     {
+//         using var scope = services.CreateAsyncScope();
+//         var connection = scope.ServiceProvider.GetRequiredService<IDbConnection>();
+//         
+//         // Read and execute StoredProcedures_Orders.sql
+//         var script = await File.ReadAllTextAsync("StoredProcedures_Orders.sql");
+//         await connection.ExecuteAsync(script);
+//         
+//         app.Logger.LogInformation("Stored procedures initialized successfully");
+//     }
+//     catch (Exception ex)
+//     {
+//         app.Logger.LogError(ex, "Failed to initialize stored procedures");
+//         throw;
+//     }
+// }
+
+// ============================================================================
+// appsettings.json Configuration Example
+// ============================================================================
+/*
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=.;Database=TemplateDb;Trusted_Connection=true;"
+  },
+  "Dapper": {
+    "CommandTimeout": 30,
+    "MaxPoolSize": 100,
+    "LogSqlCommands": false
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft": "Warning",
+      "Microsoft.EntityFrameworkCore": "Warning",
+      "Templates.Infrastructure.Persistence.Dapper": "Debug"
+    }
+  }
+}
+*/
+
+// ============================================================================
+// Key Differences from EF Core Setup
+// ============================================================================
+// 
+// EF Core:
+//   builder.Services.AddDbContext<ApplicationDbContext>(options =>
+//       options.UseSqlServer(connectionString));
+//
+// Dapper:
+//   builder.Services.AddDapperPersistence(builder.Configuration);
+//
+// Benefits:
+//   - No DbContext overhead
+//   - Connection pooling built-in
+//   - Stored procedures for optimal performance
+//   - Lower latency per request
+//   - Support for 1000+ TPS
+//
+// Trade-offs:
+//   - Must write SQL stored procedures manually
+//   - No automatic migrations (use scripts instead)
+//   - Requires SQL knowledge
+//
+// ============================================================================

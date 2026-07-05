@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!-- NuGet Package Information -->
+  <PropertyGroup>
+    <PackageId>$(ProjectName).Api</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Your Team</Authors>
+    <Description>ASP.NET Core API with Clean Architecture</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+    <PackageReference Include="Microsoft.AspNetCore.Cors" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Templates.Domain\Templates.Domain.csproj" />
+    <ProjectReference Include="..\Templates.Application\Templates.Application.csproj" />
+    <ProjectReference Include="..\Templates.Infrastructure\Templates.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

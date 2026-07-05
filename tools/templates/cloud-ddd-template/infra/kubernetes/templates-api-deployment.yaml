@@ -1,0 +1,366 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: templates
+  labels:
+    name: templates
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: templates-config
+  namespace: templates
+data:
+  ASPNETCORE_ENVIRONMENT: "Production"
+  OTEL_SERVICE_NAME: "templates-api"
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+  OTEL_TRACES_SAMPLER_ARG: "0.1"
+  LOG_LEVEL: "Information"
+  DATABASE_TIMEOUT_SECONDS: "30"
+  HEALTH_CHECK_TIMEOUT_SECONDS: "5"
+  RESILIENCE_TIMEOUT_SECONDS: "30"
+  RESILIENCE_CIRCUIT_THRESHOLD: "3"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: templates-secrets
+  namespace: templates
+type: Opaque
+stringData:
+  # These should come from a secure vault in production
+  # Using kubectl create secret generic templates-secrets \
+  #   --from-literal=db-connection-string='...' \
+  #   --from-literal=jwt-signing-key='...' \
+  #   --from-literal=otel-exporter-endpoint='http://otel-collector:4317'
+  db-connection-string: "Server=sql-server.sql;Database=TemplatesDb;User Id=sa;Password=YourPassword;"
+  jwt-signing-key: "your-jwt-signing-key-min-32-characters-long-please"
+  otel-exporter-endpoint: "http://otel-collector:4317"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: templates-api
+  namespace: templates
+  labels:
+    app: templates-api
+    version: "1.0.0"
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: templates-api
+  template:
+    metadata:
+      labels:
+        app: templates-api
+        version: "1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Pod disruption budget for high availability
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - templates-api
+              topologyKey: kubernetes.io/hostname
+      
+      serviceAccountName: templates-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      
+      containers:
+      - name: api
+        image: templates-api:1.0.0
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        
+        # Environment variables from ConfigMap and Secrets
+        env:
+        - name: ASPNETCORE_ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: templates-config
+              key: ASPNETCORE_ENVIRONMENT
+        
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: templates-secrets
+              key: otel-exporter-endpoint
+        
+        - name: ConnectionStrings__DefaultConnection
+          valueFrom:
+            secretKeyRef:
+              name: templates-secrets
+              key: db-connection-string
+        
+        - name: Jwt__SigningKey
+          valueFrom:
+            secretKeyRef:
+              name: templates-secrets
+              key: jwt-signing-key
+        
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: templates-config
+              key: LOG_LEVEL
+        
+        - name: OTEL_SERVICE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: templates-config
+              key: OTEL_SERVICE_NAME
+        
+        - name: OTEL_TRACES_SAMPLER
+          valueFrom:
+            configMapKeyRef:
+              name: templates-config
+              key: OTEL_TRACES_SAMPLER
+        
+        - name: OTEL_TRACES_SAMPLER_ARG
+          valueFrom:
+            configMapKeyRef:
+              name: templates-config
+              key: OTEL_TRACES_SAMPLER_ARG
+        
+        # Liveness probe: restart if unhealthy
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        
+        # Readiness probe: remove from load balancer if not ready
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        
+        # Startup probe: allow time for migrations on first start
+        startupProbe:
+          httpGet:
+            path: /health/live
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 0
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30  # 5 minutes total (30 * 10s)
+          successThreshold: 1
+        
+        # Resource requests and limits
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        
+        # Security context for container
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+        
+        # Volume mounts for temp files
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /app/.cache
+      
+      # Volumes for temporary data
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+      
+      # Pod disruption budget
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: templates-api
+  namespace: templates
+  labels:
+    app: templates-api
+spec:
+  type: ClusterIP
+  selector:
+    app: templates-api
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  sessionAffinity: None
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: templates-api-hpa
+  namespace: templates
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: templates-api
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: templates-api
+  namespace: templates
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: templates-api
+  namespace: templates
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: templates-api
+  namespace: templates
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: templates-api
+subjects:
+- kind: ServiceAccount
+  name: templates-api
+  namespace: templates
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: templates-api
+  namespace: templates
+spec:
+  podSelector:
+    matchLabels:
+      app: templates-api
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    - podSelector:
+        matchLabels:
+          app: otel-collector
+  egress:
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 1433    # SQL Server
+    - protocol: TCP
+      port: 6379    # Redis
+    - protocol: TCP
+      port: 5672    # RabbitMQ
+    - protocol: TCP
+      port: 4317    # OTLP
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 53      # DNS
+    - protocol: UDP
+      port: 53
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: templates-api-pdb
+  namespace: templates
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: templates-api

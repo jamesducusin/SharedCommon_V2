@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- NuGet Package Information -->
+  <PropertyGroup>
+    <PackageId>$(ProjectName).Infrastructure</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Your Team</Authors>
+    <Description>Data persistence, external services, background jobs</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" />
+    <PackageReference Include="Polly" />
+    <PackageReference Include="Polly.Caching.Distributed" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Templates.Domain\Templates.Domain.csproj" />
+    <ProjectReference Include="..\Templates.Application\Templates.Application.csproj" />
+  </ItemGroup>
+
+</Project>

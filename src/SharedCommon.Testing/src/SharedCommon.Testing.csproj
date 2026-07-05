@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Test helpers for SharedCommon consumers: fake contexts, in-memory stores, and Result assertions. Install in test projects only.</Description>
+    <PackageTags>sharedcommon;testing;fakes;stubs;assertions;xunit</PackageTags>
+    <Version>1.0.0</Version>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\SharedCommon.Core\src\SharedCommon.Core.csproj" />
+    <ProjectReference Include="..\..\SharedCommon.Auth\src\SharedCommon.Auth.csproj" />
+    <ProjectReference Include="..\..\SharedCommon.MultiTenancy\src\SharedCommon.MultiTenancy.csproj" />
+    <ProjectReference Include="..\..\SharedCommon.Auditing\src\SharedCommon.Auditing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit" />
+  </ItemGroup>
+</Project>

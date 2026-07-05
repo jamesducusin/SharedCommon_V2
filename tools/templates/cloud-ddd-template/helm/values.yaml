@@ -1,0 +1,185 @@
+# Default values for templates-api Helm chart
+# Override these with environment-specific values files
+
+global:
+  environment: production
+  domain: api.example.com
+
+image:
+  repository: templates-api
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+  annotations: {}
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+  hosts:
+    - host: api.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: templates-api-tls
+      hosts:
+        - api.example.com
+
+# Resource management
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Autoscaling
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Liveness probe
+livenessProbe:
+  httpGet:
+    path: /health/live
+    port: http
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# Readiness probe
+readinessProbe:
+  httpGet:
+    path: /health/ready
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Startup probe
+startupProbe:
+  httpGet:
+    path: /health/live
+    port: http
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 30
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Network policy
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: ingress-nginx
+
+# Configuration
+config:
+  ASPNETCORE_ENVIRONMENT: Production
+  LOG_LEVEL: Information
+  OTEL_SERVICE_NAME: templates-api
+  OTEL_TRACES_SAMPLER: parentbased_traceidratio
+  OTEL_TRACES_SAMPLER_ARG: "0.1"
+  DATABASE_TIMEOUT_SECONDS: "30"
+  HEALTH_CHECK_TIMEOUT_SECONDS: "5"
+  RESILIENCE_TIMEOUT_SECONDS: "30"
+  RESILIENCE_CIRCUIT_THRESHOLD: "3"
+
+# Secrets (use external secret management in production)
+secrets:
+  dbConnectionString: ""
+  jwtSigningKey: ""
+  otelExporterEndpoint: "http://otel-collector:4317"
+
+# Pod annotations
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+# Security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+    - ALL
+
+# Node affinity
+affinity: {}
+
+# Tolerations
+tolerations: []
+
+# Database configuration
+database:
+  host: sql-server
+  port: 1433
+  name: TemplatesDb
+  connection_timeout: 30
+  query_timeout: 30
+
+# Cache configuration
+cache:
+  enabled: true
+  host: redis
+  port: 6379
+  ttl: 3600
+
+# Messaging configuration
+messaging:
+  enabled: true
+  broker: rabbitmq
+  port: 5672
+  exchange: templates.events
+  retryCount: 3
+
+# Observability
+observability:
+  tracing:
+    enabled: true
+    samplingRate: 0.1
+    otelCollector: http://otel-collector:4317
+  metrics:
+    enabled: true
+    prometheus:
+      enabled: true
+      port: 9090
+  logging:
+    level: Information
+    format: json
